@@ -1,0 +1,6 @@
+<div id="tx-status">
+  <div class="tx-status-content">
+    <div id="tx-signature">{{ tx_signature }}</div>
+    <div id="tx-status-data" hx-get="/tx-status-data?tx_signature={{ tx_signature }}" hx-trigger="every 200ms" hx-swap="innerHTML">Sent</div>
+  </div>
+</div>

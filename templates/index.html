@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %} Index {% endblock %}
+
+{% block content %}
+<div>Hello, World!</div>
+<button 
+  class="button-tx-modal"
+  style="display: none;"
+  hx-get="/tx-modal?tx_type=initialize"
+  hx-target="body"
+  hx-swap="beforeend"
+  hx-vals="js:{pubkey:getPubkey()}"
+>
+  Initialize
+</button>
+{% endblock %}
