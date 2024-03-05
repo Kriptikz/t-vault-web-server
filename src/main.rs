@@ -11,6 +11,7 @@ use axum::{
 };
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::engine::Engine as _;
+use deadpool_diesel::mysql::{Manager, Pool};
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
@@ -19,15 +20,23 @@ use solana_sdk::{
 };
 
 use t_vault::instruction;
+use tokio::sync::Mutex;
+
+use crate::repository::{get_all, UsersFilter};
+
+pub mod repository;
+pub mod schema;
 
 struct Config {
     rpc_url: String,
+    database_url: String,
 }
 
 impl Config {
     pub fn new() -> Self {
         Config {
             rpc_url: std::env::var("SOLANA_RPC_URL").expect("SOLANA_RPC_URL not set in env."),
+            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL not set in env."),
         }
     }
 }
@@ -38,6 +47,13 @@ async fn main() {
 
     let config = Config::new();
     let rpc_client = Arc::new(RpcClient::new_with_commitment(config.rpc_url, CommitmentConfig {commitment:  CommitmentLevel::Processed}));
+    let manager = Manager::new(
+        config.database_url.to_string(),
+        deadpool_diesel::Runtime::Tokio1,
+    );
+    let pool = Pool::builder(manager).build().unwrap();
+
+    let database_pool = Arc::new(Mutex::new(pool));
 
     let app = Router::new()
         // No Auth
@@ -49,6 +65,7 @@ async fn main() {
         .route("/tx-status", get(handle_get_tx_status))
         .route("/tx-submit", post(handle_submit_tx))
         .route("/tx-status-data", get(handle_get_tx_status_data))
+        .layer(Extension(database_pool))
         .layer(Extension(rpc_client));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -93,9 +110,19 @@ struct InitializePayload {
 }
 
 async fn handle_initialize(
+    Extension(database_pool): Extension<Arc<Mutex<Pool>>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Json(payload): Json<InitializePayload>,
 ) -> impl IntoResponse {
+    {
+        let db_pool = database_pool.lock().await;
+        let users_filter = UsersFilter {
+            name: None,
+            age: None
+        };
+        let users = get_all(&db_pool, users_filter).await;
+        println!("Found users: {:?}", users);
+    }
     let to_pubkey: Pubkey = Pubkey::from_str(&payload.public_key).unwrap();
     println!("Found pubkey: {}", to_pubkey);
 
@@ -147,9 +174,19 @@ struct TxModalQueryParams {
 
 // Building the tx
 async fn handle_get_tx_modal(
+    Extension(database_pool): Extension<Arc<Mutex<Pool>>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Query(query_params): Query<TxModalQueryParams>,
 ) -> impl IntoResponse {
+    {
+        let db_pool = database_pool.lock().await;
+        let users_filter = UsersFilter {
+            name: None,
+            age: None
+        };
+        let users = get_all(&db_pool, users_filter).await;
+        println!("Found users: {:?}", users);
+    }
     let tx_type = query_params.tx_type;
     let pubkey = Pubkey::from_str(&query_params.pubkey);
 
@@ -278,3 +315,15 @@ async fn handle_submit_tx(
         "Failed to submit tx".to_string(),
     )
 }
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+struct User {
+    id: i32,
+    name: String,
+    age: i32
+}
+
+async fn handle_get_user(
+) -> impl IntoResponse {
+}
+
