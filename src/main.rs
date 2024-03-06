@@ -11,15 +11,22 @@ use axum::{
 };
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::engine::Engine as _;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use deadpool_diesel::mysql::{Manager, Pool};
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel}, instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature, transaction::Transaction
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    instruction::Instruction,
+    message::Message,
+    pubkey::Pubkey,
+    signature::Signature,
+    transaction::Transaction,
 };
 
 use t_vault::instruction;
+use t_vault_web_server::solana_transactions_repository::{NewSolanaTransaction, SolanaTransaction};
 use tokio::sync::Mutex;
 
 use crate::repository::{get_all, UsersFilter};
@@ -46,7 +53,12 @@ async fn main() {
     dotenv().ok();
 
     let config = Config::new();
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(config.rpc_url, CommitmentConfig {commitment:  CommitmentLevel::Processed}));
+    let rpc_client = Arc::new(RpcClient::new_with_commitment(
+        config.rpc_url,
+        CommitmentConfig {
+            commitment: CommitmentLevel::Processed,
+        },
+    ));
     let manager = Manager::new(
         config.database_url.to_string(),
         deadpool_diesel::Runtime::Tokio1,
@@ -118,7 +130,7 @@ async fn handle_initialize(
         let db_pool = database_pool.lock().await;
         let users_filter = UsersFilter {
             name: None,
-            age: None
+            age: None,
         };
         let users = get_all(&db_pool, users_filter).await;
         println!("Found users: {:?}", users);
@@ -160,6 +172,7 @@ async fn handle_initialize(
 #[derive(Template)]
 #[template(path = "tx-modal.html")]
 struct TxModalTemplate {
+    tx_id: i32,
     transaction_name: String,
     button_id: String,
     data_endpoint: String,
@@ -178,15 +191,6 @@ async fn handle_get_tx_modal(
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Query(query_params): Query<TxModalQueryParams>,
 ) -> impl IntoResponse {
-    {
-        let db_pool = database_pool.lock().await;
-        let users_filter = UsersFilter {
-            name: None,
-            age: None
-        };
-        let users = get_all(&db_pool, users_filter).await;
-        println!("Found users: {:?}", users);
-    }
     let tx_type = query_params.tx_type;
     let pubkey = Pubkey::from_str(&query_params.pubkey);
 
@@ -202,7 +206,11 @@ async fn handle_get_tx_modal(
 
             //let signers = &[&keypair];
 
-            let blockhash = rpc_client.get_latest_blockhash().unwrap();
+            let (blockhash, last_valid_block_height) = rpc_client
+                .get_latest_blockhash_with_commitment(CommitmentConfig {
+                    commitment: CommitmentLevel::Confirmed,
+                })
+                .unwrap();
             println!("Got latest blockhash");
 
             let message = Message::new_with_blockhash(&[ix], Some(&pubkey), &blockhash);
@@ -211,16 +219,40 @@ async fn handle_get_tx_modal(
             let serialized_tx = bincode::serialize(&tx).unwrap();
 
             let encoded_tx = BASE64.encode(serialized_tx);
-            return (
-                StatusCode::OK,
-                TxModalTemplate {
-                    transaction_name: "Initialize".to_string(),
-                    button_id: "initialize-button".to_string(),
-                    data_endpoint: "/initialize".to_string(),
-                    encoded_tx,
-                }
-                .to_string(),
+
+            let now_utc: DateTime<Utc> = Utc::now();
+
+            let now_naive_with_ms = NaiveDateTime::from_timestamp(
+                now_utc.timestamp(),
+                now_utc.timestamp_subsec_millis() as u32 * 1_000_000,
             );
+            let new_db_tx = NewSolanaTransaction {
+                blockhash: blockhash.to_string(),
+                last_valid_block_height,
+                status: 0,
+                tx: encoded_tx.clone(),
+                created_at: now_naive_with_ms,
+                sent_at: None,
+            };
+
+            {
+                let db_pool = database_pool.lock().await;
+                let db_result = SolanaTransaction::create(&db_pool, new_db_tx).await;
+
+                if let Ok(tx_id) = db_result {
+                    return (
+                        StatusCode::OK,
+                        TxModalTemplate {
+                            tx_id,
+                            transaction_name: "Initialize".to_string(),
+                            button_id: "initialize-button".to_string(),
+                            data_endpoint: "/initialize".to_string(),
+                            encoded_tx,
+                        }
+                        .to_string(),
+                    );
+                }
+            }
         }
 
         return (StatusCode::BAD_REQUEST, "Invalid tx_type".to_string());
@@ -267,9 +299,9 @@ async fn handle_get_tx_status_data(
         if let Some(status) = statuses[0].clone() {
             println!("{:?}", status);
             if let Some(confirmation) = status.confirmation_status.clone() {
-                return (StatusCode::OK, format!("{:?}", confirmation))
+                return (StatusCode::OK, format!("{:?}", confirmation));
             }
-            return (StatusCode::OK, format!("{:?}", status))
+            return (StatusCode::OK, format!("{:?}", status));
         }
     }
 
@@ -279,14 +311,26 @@ async fn handle_get_tx_status_data(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubmitTxPayload {
+    tx_id: i32,
     encoded_serialized_tx: String,
 }
 
 async fn handle_submit_tx(
+    Extension(database_pool): Extension<Arc<Mutex<Pool>>>,
     Extension(rpc_client): Extension<Arc<RpcClient>>,
     Form(tx_data): Form<SubmitTxPayload>,
 ) -> impl IntoResponse {
-    let serialized_tx = BASE64.decode(tx_data.encoded_serialized_tx).unwrap();
+    {
+        let db_pool = database_pool.lock().await;
+        let db_tx = SolanaTransaction::get_by_id(&db_pool, tx_data.tx_id).await;
+
+        if db_tx.is_err() {
+            return (StatusCode::BAD_REQUEST, "Invalid associated tx_id".to_string())
+        }
+    }
+    // TODO: more transaction validations at some point
+
+    let serialized_tx = BASE64.decode(tx_data.encoded_serialized_tx.clone()).unwrap();
     let tx: Transaction = bincode::deserialize(&serialized_tx).unwrap();
 
     let send_config = RpcSendTransactionConfig {
@@ -295,12 +339,26 @@ async fn handle_submit_tx(
         encoding: None,
         max_retries: None,
         min_context_slot: None,
-
     };
 
     let signature_result = rpc_client.send_transaction_with_config(&tx, send_config);
 
+    let now_utc: DateTime<Utc> = Utc::now();
+
+    let sent_at = NaiveDateTime::from_timestamp_opt(
+        now_utc.timestamp(),
+        now_utc.timestamp_subsec_millis() as u32 * 1_000_000,
+    ).unwrap();
+
     if let Ok(signature) = signature_result {
+        {
+            let db_pool = database_pool.lock().await;
+            let db_result =
+                SolanaTransaction::set_status_sent(&db_pool, tx_data.tx_id, signature.to_string(), sent_at, tx_data.encoded_serialized_tx).await;
+            if let Ok(_) = db_result {
+                println!("Successfully updated transaction in db!");
+            }
+        }
         return (
             StatusCode::OK,
             TxStatusTemplate {
@@ -320,10 +378,7 @@ async fn handle_submit_tx(
 struct User {
     id: i32,
     name: String,
-    age: i32
+    age: i32,
 }
 
-async fn handle_get_user(
-) -> impl IntoResponse {
-}
-
+async fn handle_get_user() -> impl IntoResponse {}

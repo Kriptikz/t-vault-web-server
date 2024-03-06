@@ -39,12 +39,14 @@ async function signAndSend(element) {
   }
   try {
     let encodedTx = element.getAttribute("encoded-tx");
+    let txId = element.getAttribute("tx-id");
 
     let tx = solanaWeb3.Transaction.from(decodeTx(encodedTx));
 
     const signedTransaction = await wallet.signTransaction(tx);
 
     let data = {
+      txId,
       encodedSerializedTx: encodeTx(signedTransaction.serialize())
     }
 

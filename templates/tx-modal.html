@@ -3,7 +3,7 @@
 	<div class="modal-content">
     <h1>{{ transaction_name }}</h1>
 		<br>
-    <button id="{{ button_id }}" onclick="signAndSend(this)" encoded-tx="{{ encoded_tx }}">SignAndSend</button>
+    <button id="{{ button_id }}" onclick="signAndSend(this)" tx-id="{{ tx_id }}" encoded-tx="{{ encoded_tx }}">SignAndSend</button>
     <br>
   </div>
   <button _="on click trigger closeModal">Cancel</button>

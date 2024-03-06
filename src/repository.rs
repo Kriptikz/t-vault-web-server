@@ -52,21 +52,22 @@ pub async fn insert(
 pub async fn get(pool: &deadpool_diesel::mysql::Pool, id: i32) -> Result<UserDb, ()> {
     let conn = pool.get().await;
     if let Ok(conn) = conn {
-        let res = conn.interact(move |conn: &mut MysqlConnection| {
-            diesel::sql_query("SELECT id, name, age FROM users WHERE id = ?")
-                .bind::<diesel::sql_types::Integer, _>(id)
-                .get_result::<UserDb>(conn)
-        })
-        .await
-        .map_err(|_| ());
+        let res = conn
+            .interact(move |conn: &mut MysqlConnection| {
+                diesel::sql_query("SELECT id, name, age FROM users WHERE id = ?")
+                    .bind::<diesel::sql_types::Integer, _>(id)
+                    .get_result::<UserDb>(conn)
+            })
+            .await
+            .map_err(|_| ());
 
         if let Ok(Ok(user)) = res {
-            return Ok(user)
+            return Ok(user);
         } else {
-            return Err(())
+            return Err(());
         }
     } else {
-        return Err(())
+        return Err(());
     }
 }
 
@@ -76,20 +77,21 @@ pub async fn get_all(
 ) -> Result<Vec<UserDb>, ()> {
     let conn = pool.get().await;
     if let Ok(conn) = conn {
-        let res = conn.interact(move |conn: &mut MysqlConnection| {
-            let mut base_query = "SELECT id, name, age FROM users";
+        let res = conn
+            .interact(move |conn: &mut MysqlConnection| {
+                let base_query = "SELECT id, name, age FROM users";
 
-            let query = diesel::sql_query(base_query);
+                let query = diesel::sql_query(base_query);
 
-            query.load::<UserDb>(conn)
-        })
-        .await
-        .map_err(|_| ());
+                query.load::<UserDb>(conn)
+            })
+            .await
+            .map_err(|_| ());
 
         if let Ok(Ok(users)) = res {
-            return Ok(users)
+            return Ok(users);
         } else {
-            return Err(())
+            return Err(());
         }
     } else {
         Err(())

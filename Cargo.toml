@@ -24,6 +24,7 @@ t-vault = { path = "../../backend/t-vault/programs/t-vault", features = ["no-ent
 anchor-client = { version = "0.29.0", features = ["async"] }
 dotenv = "0.15.0"
 base64 = "0.22.0"
-diesel = { version = "2.1.4", features = ["mysql"] }
+diesel = { version = "2.1.4", features = ["mysql", "chrono"] }
 deadpool-diesel = { version = "0.5.0", features = ["mysql"] }
+chrono = "0.4.34"
 
