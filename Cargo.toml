@@ -27,4 +27,5 @@ base64 = "0.22.0"
 diesel = { version = "2.1.4", features = ["mysql", "chrono"] }
 deadpool-diesel = { version = "0.5.0", features = ["mysql"] }
 chrono = "0.4.34"
+solana-transaction-status = "1.18.4"
 

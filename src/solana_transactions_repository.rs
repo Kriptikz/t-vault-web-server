@@ -38,7 +38,7 @@ pub struct SolanaTransaction {
 }
 
 impl SolanaTransaction {
-    pub async fn create(
+    pub async fn insert(
         pool: &deadpool_diesel::mysql::Pool,
         new_tx: NewSolanaTransaction,
     ) -> Result<i32, ()> {
@@ -116,6 +116,29 @@ impl SolanaTransaction {
         }
     }
 
+    pub async fn get_all_not_finalized_or_failed(
+        pool: &deadpool_diesel::mysql::Pool,
+    ) -> Result<Vec<SolanaTransaction>, ()> {
+        let conn = pool.get().await;
+        if let Ok(conn) = conn {
+            let res = conn
+                .interact(move |conn: &mut MysqlConnection| {
+                    diesel::sql_query("SELECT * FROM solana_transactions WHERE status < 4 AND sent_at IS NOT NULL LIMIT 255")
+                        .load::<SolanaTransaction>(conn)
+                })
+                .await;
+
+            match res {
+                Ok(Ok(transaction)) => Ok(transaction),
+                _ => Err(()),
+            }
+        } else {
+            println!("Failed to get connection to db from pool.");
+            Err(())
+        }
+
+    }
+
     pub async fn set_status_sent(
         pool: &deadpool_diesel::mysql::Pool,
         tx_id: i32,
@@ -174,6 +197,13 @@ impl SolanaTransaction {
         SolanaTransaction::update_status(pool, id, 4, Some(finalized_at)).await
     }
 
+    pub async fn set_status_failed(
+        pool: &deadpool_diesel::mysql::Pool,
+        id: i32,
+    ) -> Result<(), ()> {
+        SolanaTransaction::update_status(pool, id, 5, None).await
+    }
+
     async fn update_status(
         pool: &deadpool_diesel::mysql::Pool,
         id: i32,
@@ -193,6 +223,10 @@ impl SolanaTransaction {
                 4 => format!(
                     "UPDATE solana_transactions SET status = {}, finalized_at = '{}' WHERE id = {}",
                     status, datetime_str, id
+                ),
+                5 => format!(
+                    "UPDATE solana_transactions SET status = {} WHERE id = {}",
+                    status, id
                 ),
                 _ => return Err(()), // Return an error if an unsupported status is provided
             };
